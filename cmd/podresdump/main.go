@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -105,8 +104,9 @@ func main() {
 	}()
 
 	var messages uint64
-
+	out := log.New(os.Stdout, "", log.Ldate|log.Lmicroseconds)
 	done := false
+
 	for !done {
 		select {
 		case <-stopCh:
@@ -118,7 +118,7 @@ func main() {
 			if err != nil {
 				log.Printf("%v", err)
 			} else {
-				fmt.Printf("%s %s\n", podActionToString(resp.Action), string(jsonBytes))
+				out.Printf("%s %s\n", podActionToString(resp.Action), string(jsonBytes))
 				messages++
 			}
 		}
