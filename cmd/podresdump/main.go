@@ -24,7 +24,6 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	flag "github.com/spf13/pflag"
 
 	podresources "k8s.io/kubernetes/pkg/kubelet/apis/podresources"
@@ -44,14 +43,20 @@ func podActionToString(action podresourcesapi.WatchPodAction) string {
 	switch action {
 	case podresourcesapi.WatchPodAction_ADDED:
 		return "ADD"
-	case podresourcesapi.WatchPodAction_MODIFIED:
-		return "MOD"
 	case podresourcesapi.WatchPodAction_DELETED:
 		return "DEL"
 	default:
 		return "???"
 	}
 }
+
+type dumper struct {
+	cli           podresourcesapi.PodResourcesListerClient
+	autoReconnect bool
+	namespace     string
+	out           *log.Logger
+}
+
 func main() {
 	var err error
 	autoReconnect := flag.BoolP("autoreconnect", "A", false, "don't give up if connection fails.")
@@ -72,21 +77,31 @@ func main() {
 	}
 	defer conn.Close()
 
+	dm := dumper{
+		cli:           cli,
+		autoReconnect: *autoReconnect,
+		namespace:     *listNamespace,
+		out:           log.New(os.Stdout, "", log.Ldate|log.Lmicroseconds),
+	}
+
 	switch *endpoint {
 	case "list":
-		Listing(*autoReconnect, cli, *listNamespace)
+		Listing(dm)
 	case "watch":
-		Watching(*autoReconnect, cli)
+		Watching(dm)
+	default:
+		log.Fatalf("unsupported endpoint: %q", *endpoint)
 	}
 }
-func Watching(autoReconnect bool, cli podresourcesapi.PodResourcesListerClient) {
+
+func Watching(dm dumper) {
 	var watcher podresourcesapi.PodResourcesLister_WatchClient
-	watcher, err := cli.Watch(context.TODO(), &podresourcesapi.WatchPodResourcesRequest{})
+	watcher, err := dm.cli.Watch(context.TODO(), &podresourcesapi.WatchPodResourcesRequest{})
 	for {
 		if err == nil {
 			break
 		} else {
-			if !autoReconnect {
+			if !dm.autoReconnect {
 				log.Fatalf("failed to watch: %v", err)
 			} else {
 				log.Printf("error watching: %v", err)
@@ -94,10 +109,7 @@ func Watching(autoReconnect bool, cli podresourcesapi.PodResourcesListerClient) 
 			}
 		}
 	}
-	receiveEvent(watcher)
-}
 
-func receiveEvent(watcher podresourcesapi.PodResourcesLister_WatchClient) {
 	respsCh := make(chan *podresourcesapi.WatchPodResourcesResponse)
 	stopCh := make(chan bool, 1)
 	sigsCh := make(chan os.Signal, 1)
@@ -118,9 +130,7 @@ func receiveEvent(watcher podresourcesapi.PodResourcesLister_WatchClient) {
 	}()
 
 	var messages uint64
-	out := log.New(os.Stdout, "", log.Ldate|log.Lmicroseconds)
 	done := false
-
 	for !done {
 		select {
 		case <-stopCh:
@@ -132,7 +142,7 @@ func receiveEvent(watcher podresourcesapi.PodResourcesLister_WatchClient) {
 			if err != nil {
 				log.Printf("%v", err)
 			} else {
-				out.Printf("%s %s\n", podActionToString(resp.Action), string(jsonBytes))
+				dm.out.Printf("%s %s\n", podActionToString(resp.Action), string(jsonBytes))
 				messages++
 			}
 		}
@@ -140,32 +150,33 @@ func receiveEvent(watcher podresourcesapi.PodResourcesLister_WatchClient) {
 
 	log.Printf("%v messages in %v", messages, time.Now().Sub(started))
 }
-func Listing(autoReconnect bool, cli podresourcesapi.PodResourcesListerClient, ns string) {
-	resp, err := cli.List(context.TODO(), &podresourcesapi.ListPodResourcesRequest{})
+
+func Listing(dm dumper) {
+	resp, err := dm.cli.List(context.TODO(), &podresourcesapi.ListPodResourcesRequest{})
 	for {
 		if err == nil {
 			break
 		} else {
-			if !autoReconnect {
+			if !dm.autoReconnect {
 				log.Fatalf("failed to watch: %v", err)
 			} else {
-				log.Printf("Can't receive response: %v.Get(_) = _, %v", cli, err)
+				log.Printf("Can't receive response: %v.Get(_) = _, %v", dm.cli, err)
 				time.Sleep(1 * time.Second)
 			}
 		}
 	}
-	showPodResources(resp, ns)
-}
 
-func showPodResources(resp *podresourcesapi.ListPodResourcesResponse, ns string) {
 	for _, podResource := range resp.GetPodResources() {
-		if podResource.GetNamespace() != ns {
+		if podResource.GetNamespace() != dm.namespace {
 			log.Printf("SKIP pod %q\n", podResource.Name)
 			continue
 		}
-		for _, container := range podResource.GetContainers() {
-			log.Printf("container %q\n", spew.Sdump(container))
-		}
 
+		jsonBytes, err := json.Marshal(podResource)
+		if err != nil {
+			log.Printf("%v", err)
+		} else {
+			dm.out.Printf("%s\n", string(jsonBytes))
+		}
 	}
 }
