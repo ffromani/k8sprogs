@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	flag "github.com/spf13/pflag"
 
 	podresources "k8s.io/kubernetes/pkg/kubelet/apis/podresources"
@@ -33,6 +34,7 @@ import (
 
 const (
 	defaultPodResourcesPath    = "/var/lib/kubelet/pod-resources"
+	defaultNamespace           = "default"
 	defaultPodResourcesTimeout = 10 * time.Second
 	defaultPodResourcesMaxSize = 1024 * 1024 * 16 // 16 Mb
 	// obtained these values from node e2e tests : https://github.com/kubernetes/kubernetes/blob/82baa26905c94398a0d19e1b1ecf54eb8acb6029/test/e2e_node/util.go#L70
@@ -50,11 +52,13 @@ func podActionToString(action podresourcesapi.WatchPodAction) string {
 		return "???"
 	}
 }
-
 func main() {
 	var err error
 	autoReconnect := flag.BoolP("autoreconnect", "A", false, "don't give up if connection fails.")
 	podResourcesSocketPath := flag.StringP("socket", "S", defaultPodResourcesPath, "podresources socket path.")
+	listNamespace := flag.StringP("listnamespace", "N", defaultNamespace, "namespace to check")
+	endpoint := flag.StringP("endpoint", "E", "list", "List/Watch podresource API Endpoint")
+
 	flag.Parse()
 
 	sockPath, err := kubeletutil.LocalEndpoint(*podResourcesSocketPath, podresources.Socket)
@@ -68,22 +72,32 @@ func main() {
 	}
 	defer conn.Close()
 
+	switch *endpoint {
+	case "list":
+		Listing(*autoReconnect, cli, *listNamespace)
+	case "watch":
+		Watching(*autoReconnect, cli)
+	}
+}
+func Watching(autoReconnect bool, cli podresourcesapi.PodResourcesListerClient) {
 	var watcher podresourcesapi.PodResourcesLister_WatchClient
+	watcher, err := cli.Watch(context.TODO(), &podresourcesapi.WatchPodResourcesRequest{})
 	for {
-		watcher, err = cli.Watch(context.TODO(), &podresourcesapi.WatchPodResourcesRequest{})
 		if err == nil {
 			break
 		} else {
-			if !*autoReconnect {
+			if !autoReconnect {
 				log.Fatalf("failed to watch: %v", err)
 			} else {
 				log.Printf("error watching: %v", err)
 				time.Sleep(1 * time.Second)
 			}
 		}
-
 	}
+	receiveEvent(watcher)
+}
 
+func receiveEvent(watcher podresourcesapi.PodResourcesLister_WatchClient) {
 	respsCh := make(chan *podresourcesapi.WatchPodResourcesResponse)
 	stopCh := make(chan bool, 1)
 	sigsCh := make(chan os.Signal, 1)
@@ -125,4 +139,33 @@ func main() {
 	}
 
 	log.Printf("%v messages in %v", messages, time.Now().Sub(started))
+}
+func Listing(autoReconnect bool, cli podresourcesapi.PodResourcesListerClient, ns string) {
+	resp, err := cli.List(context.TODO(), &podresourcesapi.ListPodResourcesRequest{})
+	for {
+		if err == nil {
+			break
+		} else {
+			if !autoReconnect {
+				log.Fatalf("failed to watch: %v", err)
+			} else {
+				log.Printf("Can't receive response: %v.Get(_) = _, %v", cli, err)
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}
+	showPodResources(resp, ns)
+}
+
+func showPodResources(resp *podresourcesapi.ListPodResourcesResponse, ns string) {
+	for _, podResource := range resp.GetPodResources() {
+		if podResource.GetNamespace() != ns {
+			log.Printf("SKIP pod %q\n", podResource.Name)
+			continue
+		}
+		for _, container := range podResource.GetContainers() {
+			log.Printf("container %q\n", spew.Sdump(container))
+		}
+
+	}
 }
