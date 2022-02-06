@@ -21,13 +21,12 @@ import (
 	"encoding/json"
 	"log"
 	"os"
-	"os/signal"
 	"time"
 
 	flag "github.com/spf13/pflag"
 
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 	podresources "k8s.io/kubernetes/pkg/kubelet/apis/podresources"
-	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
 )
 
@@ -38,17 +37,6 @@ const (
 	defaultPodResourcesMaxSize = 1024 * 1024 * 16 // 16 Mb
 	// obtained these values from node e2e tests : https://github.com/kubernetes/kubernetes/blob/82baa26905c94398a0d19e1b1ecf54eb8acb6029/test/e2e_node/util.go#L70
 )
-
-func podActionToString(action podresourcesapi.WatchPodAction) string {
-	switch action {
-	case podresourcesapi.WatchPodAction_ADDED:
-		return "ADD"
-	case podresourcesapi.WatchPodAction_DELETED:
-		return "DEL"
-	default:
-		return "???"
-	}
-}
 
 type dumper struct {
 	cli           podresourcesapi.PodResourcesListerClient
@@ -71,7 +59,7 @@ func main() {
 		log.Fatalf("%s", err)
 	}
 
-	cli, conn, err := podresources.GetClient(sockPath, defaultPodResourcesTimeout, defaultPodResourcesMaxSize)
+	cli, conn, err := podresources.GetV1Client(sockPath, defaultPodResourcesTimeout, defaultPodResourcesMaxSize)
 	if err != nil {
 		log.Fatalf("failed to connect: %v", err)
 	}
@@ -87,10 +75,54 @@ func main() {
 	switch *endpoint {
 	case "list":
 		Listing(dm)
-	case "watch":
-		Watching(dm)
+	// TODO: Add watch support
+	// case "watch":
+	// 	Watching(dm)
 	default:
 		log.Fatalf("unsupported endpoint: %q", *endpoint)
+	}
+}
+
+func Listing(dm dumper) {
+	resp, err := dm.cli.List(context.TODO(), &podresourcesapi.ListPodResourcesRequest{})
+	for {
+		if err == nil {
+			break
+		} else {
+			if !dm.autoReconnect {
+				log.Fatalf("failed to watch: %v", err)
+			} else {
+				log.Printf("Can't receive response: %v.Get(_) = _, %v", dm.cli, err)
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}
+
+	for _, podResource := range resp.GetPodResources() {
+		if podResource.GetNamespace() != dm.namespace {
+			log.Printf("SKIP pod %q\n", podResource.Name)
+			continue
+		}
+
+		jsonBytes, err := json.Marshal(podResource)
+		if err != nil {
+			log.Printf("%v", err)
+		} else {
+			dm.out.Printf("%s\n", string(jsonBytes))
+		}
+	}
+}
+
+// TODO: Add Watch Support
+/*
+func podActionToString(action podresourcesapi.WatchPodAction) string {
+	switch action {
+	case podresourcesapi.WatchPodAction_ADDED:
+		return "ADD"
+	case podresourcesapi.WatchPodAction_DELETED:
+		return "DEL"
+	default:
+		return "???"
 	}
 }
 
@@ -150,33 +182,4 @@ func Watching(dm dumper) {
 
 	log.Printf("%v messages in %v", messages, time.Now().Sub(started))
 }
-
-func Listing(dm dumper) {
-	resp, err := dm.cli.List(context.TODO(), &podresourcesapi.ListPodResourcesRequest{})
-	for {
-		if err == nil {
-			break
-		} else {
-			if !dm.autoReconnect {
-				log.Fatalf("failed to watch: %v", err)
-			} else {
-				log.Printf("Can't receive response: %v.Get(_) = _, %v", dm.cli, err)
-				time.Sleep(1 * time.Second)
-			}
-		}
-	}
-
-	for _, podResource := range resp.GetPodResources() {
-		if podResource.GetNamespace() != dm.namespace {
-			log.Printf("SKIP pod %q\n", podResource.Name)
-			continue
-		}
-
-		jsonBytes, err := json.Marshal(podResource)
-		if err != nil {
-			log.Printf("%v", err)
-		} else {
-			dm.out.Printf("%s\n", string(jsonBytes))
-		}
-	}
-}
+*/
