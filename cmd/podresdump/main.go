@@ -50,7 +50,7 @@ func main() {
 	autoReconnect := flag.BoolP("autoreconnect", "A", false, "don't give up if connection fails.")
 	podResourcesSocketPath := flag.StringP("socket", "S", defaultPodResourcesPath, "podresources socket path.")
 	listNamespace := flag.StringP("listnamespace", "N", defaultNamespace, "namespace to check")
-	endpoint := flag.StringP("endpoint", "E", "list", "List/Watch podresource API Endpoint")
+	endpoint := flag.StringP("endpoint", "E", "list", "list/watch/getallocatebleresources podresource API Endpoint")
 
 	flag.Parse()
 
@@ -75,6 +75,8 @@ func main() {
 	switch *endpoint {
 	case "list":
 		Listing(dm)
+	case "getallocatableresources":
+		GetAllocatableResources(dm)
 	// TODO: Add watch support
 	// case "watch":
 	// 	Watching(dm)
@@ -90,7 +92,7 @@ func Listing(dm dumper) {
 			break
 		} else {
 			if !dm.autoReconnect {
-				log.Fatalf("failed to watch: %v", err)
+				log.Fatalf("failed to list: %v", err)
 			} else {
 				log.Printf("Can't receive response: %v.Get(_) = _, %v", dm.cli, err)
 				time.Sleep(1 * time.Second)
@@ -111,6 +113,30 @@ func Listing(dm dumper) {
 			dm.out.Printf("%s\n", string(jsonBytes))
 		}
 	}
+}
+
+func GetAllocatableResources(dm dumper) {
+	resp, err := dm.cli.GetAllocatableResources(context.TODO(), &podresourcesapi.AllocatableResourcesRequest{})
+	for {
+		if err == nil {
+			break
+		} else {
+			if !dm.autoReconnect {
+				log.Fatalf("failed to show GetAllocatableResources: %v", err)
+			} else {
+				log.Printf("Can't receive response: %v.Get(_) = _, %v", dm.cli, err)
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}
+
+	jsonBytes, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("%v", err)
+	} else {
+		dm.out.Printf("%s\n", string(jsonBytes))
+	}
+
 }
 
 // TODO: Add Watch Support
