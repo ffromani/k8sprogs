@@ -78,8 +78,6 @@ func main() {
 	case "getallocatableresources":
 		GetAllocatableResources(dm)
 	// TODO: Add watch support
-	// case "watch":
-	// 	Watching(dm)
 	default:
 		log.Fatalf("unsupported endpoint: %q", *endpoint)
 	}
@@ -138,74 +136,3 @@ func GetAllocatableResources(dm dumper) {
 	}
 
 }
-
-// TODO: Add Watch Support
-/*
-func podActionToString(action podresourcesapi.WatchPodAction) string {
-	switch action {
-	case podresourcesapi.WatchPodAction_ADDED:
-		return "ADD"
-	case podresourcesapi.WatchPodAction_DELETED:
-		return "DEL"
-	default:
-		return "???"
-	}
-}
-
-func Watching(dm dumper) {
-	var watcher podresourcesapi.PodResourcesLister_WatchClient
-	watcher, err := dm.cli.Watch(context.TODO(), &podresourcesapi.WatchPodResourcesRequest{})
-	for {
-		if err == nil {
-			break
-		} else {
-			if !dm.autoReconnect {
-				log.Fatalf("failed to watch: %v", err)
-			} else {
-				log.Printf("error watching: %v", err)
-				time.Sleep(1 * time.Second)
-			}
-		}
-	}
-
-	respsCh := make(chan *podresourcesapi.WatchPodResourcesResponse)
-	stopCh := make(chan bool, 1)
-	sigsCh := make(chan os.Signal, 1)
-	signal.Notify(sigsCh, os.Interrupt)
-
-	started := time.Now()
-
-	go func() {
-		for {
-			resp, err := watcher.Recv()
-			if err != nil {
-				log.Printf("%s", err)
-				stopCh <- true
-				break
-			}
-			respsCh <- resp
-		}
-	}()
-
-	var messages uint64
-	done := false
-	for !done {
-		select {
-		case <-stopCh:
-			done = true
-		case <-sigsCh:
-			done = true
-		case resp := <-respsCh:
-			jsonBytes, err := json.Marshal(resp.PodResources)
-			if err != nil {
-				log.Printf("%v", err)
-			} else {
-				dm.out.Printf("%s %s\n", podActionToString(resp.Action), string(jsonBytes))
-				messages++
-			}
-		}
-	}
-
-	log.Printf("%v messages in %v", messages, time.Now().Sub(started))
-}
-*/
