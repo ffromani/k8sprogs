@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod-list
+spec:
+  containers:
+  - name: my-container
+    image: quay.io/fromani/k8sprogs:latest
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/sh", "-c"]
+    args: ["-c", "while true; do /usr/local/bin/podresdump -S /host-var/lib/kubelet/pod-resources -E list; sleep 10;done"]
+    volumeMounts:
+      - name: host-podresources
+        mountPath: "/host-var/lib/kubelet/pod-resources"
+  volumes:
+  - name: host-podresources
+    hostPath:
+      path: "/var/lib/kubelet/pod-resources"
